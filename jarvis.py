@@ -1,11 +1,11 @@
-# jarvis.py (UPDATED with OpenRouter fallback + smart replies)
+# jarvis.py (FINAL UPDATED for Render and Pycord)
 
 import os
 import random
 import threading
 import traceback
 from flask import Flask
-import httpx  # For OpenRouter
+import httpx
 import discord
 from discord.ext import commands, tasks
 from openai import OpenAI
@@ -20,7 +20,7 @@ if not TOKEN:
     print("❌ Missing DISCORD_BOT_TOKEN!")
     exit(1)
 
-# --- Load fallback replies from files ---
+# --- Load fallback replies ---
 def load_fallback_lines(filename):
     with open(filename, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
@@ -30,10 +30,9 @@ fallback_funny = load_fallback_lines("fallback_funny.txt")
 fallback_angry = load_fallback_lines("fallback_angry.txt")
 fallback_roast = load_fallback_lines("fallback_roast.txt")
 fallback_normal = load_fallback_lines("fallback_normal.txt")
-
 all_fallback_replies = fallback_flirty + fallback_funny + fallback_angry + fallback_roast + fallback_normal
 
-# --- Configure OpenAI ---
+# --- OpenAI setup ---
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # --- Discord bot setup ---
@@ -68,7 +67,7 @@ def detect_gender(username, roles):
     else:
         return "unknown"
 
-# --- Smart AI reply system with OpenRouter fallback ---
+# --- Smart AI reply with fallback ---
 async def get_ai_reply(prompt):
     try:
         if openai_client:
@@ -83,14 +82,13 @@ async def get_ai_reply(prompt):
     except Exception as e:
         print("🔴 OpenAI Error:", e)
 
-    # OpenRouter fallback
     try:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json"
         }
         body = {
-            "model": "openchat/openchat-7b",  # Free and good model
+            "model": "openchat/openchat-7b",
             "messages": [
                 {"role": "system", "content": "You are JARVIS: a flirty, witty, human-like friend who chats like a real person."},
                 {"role": "user", "content": prompt}
@@ -101,12 +99,11 @@ async def get_ai_reply(prompt):
             res.raise_for_status()
             data = res.json()
             return data['choices'][0]['message']['content'].strip()
-
     except Exception as e:
         print("🔴 OpenRouter failed too:", e)
         return random.choice(all_fallback_replies)
 
-# --- Auto-talk every 1.5 hours (5400 seconds) ---
+# --- Auto chat every 1.5 hours ---
 @tasks.loop(seconds=5400)
 async def auto_talk():
     for guild in bot.guilds:
@@ -115,13 +112,12 @@ async def auto_talk():
                 members = [m for m in guild.members if not m.bot]
                 if members:
                     target = random.choice(members)
-                    name = target.display_name
-                    prompt = f"Start a flirty or friendly conversation with {name}."
+                    prompt = f"Start a flirty or friendly conversation with {target.display_name}."
                     msg = await get_ai_reply(prompt)
                     await channel.send(f"Hey {target.mention} 😏\n{msg}")
                 break
 
-# --- Per-channel toggle for JARVIS replies ---
+# --- Channel toggle ---
 enabled_channels = set()
 
 @bot.event
@@ -138,7 +134,6 @@ async def on_message(message):
     channel_id = message.channel.id
     mentioned = bot.user in message.mentions
 
-    # Toggle ON/OFF
     if content == "!jarvis on":
         enabled_channels.add(channel_id)
         await message.channel.send("😇 JARVIS is now ON in this channel.")
@@ -156,7 +151,6 @@ async def on_message(message):
     casual_keywords = ["hi", "hello", "bored", "single", "love", "miss me", "talk", "you there"]
 
     if mentioned or any(word in content for word in casual_keywords):
-        # Must reply if mentioned, otherwise reply randomly (30% chance)
         if mentioned or random.random() < 0.3:
             prompt = f"{message.author.name} ({gender}) says: {message.content}. Reply casually or flirtatiously."
             reply = await get_ai_reply(prompt)
@@ -166,15 +160,15 @@ async def on_message(message):
                 await message.channel.send(random.choice(flirty_gifs))
 
     if content == "jarvis delete":
-        if message.channel.permissions_for(message.author).manage_messages:
+        try:
             deleted = await message.channel.purge(limit=100)
-            await message.channel.send(f"Yes sir, {len(deleted)} messages deleted! 🧹")
-        else:
-            await message.channel.send("You need permissions for that, cutie 💅")
+            await message.channel.send(f"{len(deleted)} messages deleted by {message.author.mention} 🧹")
+        except discord.Forbidden:
+            await message.channel.send("Oops! I need `Manage Messages` permission to delete messages 😅")
 
     await bot.process_commands(message)
 
-# --- Start Flask and Bot ---
+# --- Run Flask and bot ---
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot.run(TOKEN)
